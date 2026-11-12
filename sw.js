@@ -1,5 +1,5 @@
 // Replaced by a content hash in the static build. No skipWaiting: avoid mixing releases.
-const VERSION='941ad1d32eb9b501';
+const VERSION='59879d71f254e6f3';
 const BASE=new URL('./',self.registration.scope);
 const PREFIX='nutrir-shell:'+BASE.pathname+':';
 const CACHE=PREFIX+VERSION;
