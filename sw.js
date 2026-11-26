@@ -1,4 +1,4 @@
-const VERSION='5c319450f267cba0';
+const VERSION='ceca3c4ced89d0ac';
 const BASE=new URL('./',self.registration.scope);
 const PREFIX='nutrir-shell:'+BASE.pathname+':';
 const CACHE=PREFIX+VERSION;

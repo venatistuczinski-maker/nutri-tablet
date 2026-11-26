@@ -30,6 +30,11 @@ const densities = {
   471: [1, 'café preparado'], 475: [1, 'chá de ervas'], 476: [1, 'infusão de chá'], 477: [1, 'infusão de chá'],
 };
 
+const sovado = {
+  'unidade média': [50, 'Pães Netto · rótulo de pão sovado individual (50 g por unidade)', 'estimate'],
+  'fatia média': [25, 'Delícias do Trigo · rótulo de pão sovado fatiado (50 g em duas fatias)', 'estimate'],
+};
+
 export function measureKey(item) {
   if (item.food !== undefined) return `taco:${item.food}`;
   if (item.customFood) return `local:${item.customFood.id}`;
@@ -49,6 +54,13 @@ export function measureDefault(item, unitName, preferences) {
   if (canonical === 'porção média' && item.recipe) {
     return [item.recipe.yieldGrams / item.recipe.portions, 'Rendimento da ficha dividido pelo número de porções', 'reference'];
   }
+  if (item.food === 54 && sovado[canonical]) return sovado[canonical];
+  const name = item.customFood?.name ?? item.recipe?.name ?? '';
+  if (canonical === 'ponta de faca' && /\b(?:chimia|schimier|schmier|chimier)\b/i.test(name)) {
+    return [12.5, 'IBGE · POF 2008–2009 · cód. 6902301, schimier de cana · passada de faca de doce cremoso usada como aproximação', 'estimate'];
+  }
+  // The legacy coffee measure used a 50 mL cup, distinct from the 200 mL tea cup.
+  if (item.food === 471 && unitName === 'xícara') return measureDefault(item, 'xícara de café', preferences);
   const data = ibgeMeasures[item.customFood?.measureReference === 'geleia' ? 'geleia' : item.food];
   const density = densities[item.food];
   const personalDensity = saved.mL ?? (saved.L === undefined ? undefined : saved.L / 1000);

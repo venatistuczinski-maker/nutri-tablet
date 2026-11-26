@@ -15,7 +15,7 @@ const nutrientNames = {kcal: 'Energia (kcal)', protein: 'Proteínas (g)', carbs:
 const nutrientLabel = values => `VET ${format(values.kcal)} kcal · Proteínas ${format(values.protein)} g · Carboidratos ${format(values.carbs)} g · Lipídios ${format(values.fat)} g`;
 const source = `<p class="muted">Valores por peso comestível. Traços são tratados como zero. <a href="${tacoUrl}" target="_blank" rel="noopener noreferrer">TACO, NEPA/UNICAMP, 4ª edição, 2011</a> · <a href="https://www.tbca.net.br/" target="_blank" rel="noopener noreferrer">Consultar TBCA online</a></p>`;
 
-const measureHelp = `<p>As medidas com peso aparecem primeiro. Confirme as estimativas sugeridas ou informe a pesagem. Para guardar um peso da Casa, toque em “Guardar padrão” e salve. Fontes de referência: <a href="${ibgeMeasuresUrl}" target="_blank" rel="noopener noreferrer">IBGE · POF</a> e <a href="${faoDensityUrl}" target="_blank" rel="noopener noreferrer">FAO/INFOODS · densidades</a>.</p>`;
+const measureHelp = `<p>As medidas com peso aparecem primeiro. Confirme as estimativas sugeridas ou informe a pesagem. Para guardar um peso da Casa, toque em “Guardar padrão” ou use “Aprovar e guardar medidas deste formulário”. Salve para gravar os padrões no cofre. Fontes de referência: <a href="${ibgeMeasuresUrl}" target="_blank" rel="noopener noreferrer">IBGE · POF</a> e <a href="${faoDensityUrl}" target="_blank" rel="noopener noreferrer">FAO/INFOODS · densidades</a>.</p>`;
 
 function measureDraft(state) {
   const values = structuredClone(state.measurePreferences ?? {});
@@ -27,6 +27,31 @@ function measureDraft(state) {
   }, commit(next) {
     if (changed) next.measurePreferences = values;
   }};
+}
+
+function bindBatchMeasures(form, notify) {
+  const button = form.querySelector('[data-batch-measures]');
+  if (!button) return;
+  button.onclick = () => {
+    const rows = [...form.querySelectorAll('[data-batch-ready]')];
+    const weights = new Map();
+    for (const row of rows) {
+      const key = row.dataset.batchReady;
+      const weight = row.querySelector('[data-weight]').valueAsNumber;
+      if (weights.has(key) && weights.get(key) !== weight) {
+        return notify('Há pesos diferentes para a mesma medida do mesmo alimento. Guarde individualmente o peso escolhido.');
+      }
+      weights.set(key, weight);
+    }
+    for (const row of rows) {
+      const approval = row.querySelector('[data-approve]');
+      if (!approval.hidden) approval.click();
+      row.querySelector('[data-save-measure]').click();
+    }
+    notify(rows.length
+      ? `${rows.length} medidas preparadas. Salve o formulário para guardar no cofre.`
+      : 'Escolha uma medida sugerida ou ajuste um peso para guardar em lote.');
+  };
 }
 
 function customFoodFields() {
@@ -56,6 +81,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     const rows = root.querySelector('.food-rows');
     const search = root.querySelector('input[type=search]');
     const results = root.querySelector('.search-results');
+    const pendingEstimates = new WeakMap();
+    const changedMeasures = new WeakSet();
     function renderRows(focusIndex) {
       rows.innerHTML = '';
       items.forEach((item, index) => {
@@ -70,7 +97,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           <label>Medida<select>${group('Com conversão disponível', options.reference)}
             ${option('g', 'g · gramas')}${option('kg', 'kg · quilogramas')}
             ${group('Estimativas para aprovação', options.estimate)}${group('Requer pesagem ou densidade', options.manual)}</select></label>
-          <label data-weight-label><span>Gramas por medida</span><input data-weight type="number" min="0.000001" max="100000" step="any" inputmode="decimal" value="${item.gramsPerUnit ?? ''}"></label>
+          <label data-weight-label><span>Gramas por medida</span><input data-weight type="number" min="0.000001" max="100000" step="any" inputmode="decimal" value="${pendingEstimates.get(item)?.[0] ?? item.gramsPerUnit ?? ''}"></label>
           <output></output><small data-measure-source></small><button type="button" class="secondary" data-approve hidden>Aprovar estimativa</button><button type="button" class="secondary" data-save-measure>Guardar padrão</button><button type="button" class="secondary" data-remove>Excluir item</button>`;
         const quantity = row.querySelector('[data-quantity]');
         const select = row.querySelector('select');
@@ -81,7 +108,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         const saveMeasure = row.querySelector('[data-save-measure]');
         const approve = row.querySelector('[data-approve]');
         const key = measureKey(item);
-        let pending;
+        let pending = pendingEstimates.get(item);
         function setConversion([gramsPerUnit, source, kind]) {
           item.gramsPerUnit = gramsPerUnit;
           item.conversion = {source, kind};
@@ -100,6 +127,9 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           measureSource.textContent = conversion ? `${label[conversion.kind]} · ${conversion.source}`
             : Number.isFinite(item.gramsPerUnit) ? 'Peso registrado no item' : 'Informe o peso em gramas desta medida.';
           weight.setCustomValidity(pending ? 'Aprove a estimativa ou informe o peso medido.' : '');
+          if (!readonly && key && !weight.disabled && (pending || (changedMeasures.has(item) && weight.validity.valid))) {
+            row.dataset.batchReady = `${key}:${item.unit}`;
+          } else delete row.dataset.batchReady;
           quantity.setCustomValidity(grams(item) > 100000 ? 'Limite de 100.000 g por item.' : '');
           display.textContent = pending ? 'Estimativa ainda fora do total' :
             Number.isFinite(grams(item)) && grams(item) > 0 ? `${format(grams(item))} g` : 'Informe o peso';
@@ -108,6 +138,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         quantity.oninput = () => { item.quantity = quantity.valueAsNumber; edit(); };
         weight.oninput = () => {
           pending = undefined;
+          pendingEstimates.delete(item);
+          changedMeasures.add(item);
           setConversion([weight.valueAsNumber, 'Peso informado para este item', 'personal']);
           edit();
         };
@@ -117,9 +149,14 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           delete item.gramsPerUnit;
           delete item.conversion;
           pending = undefined;
+          pendingEstimates.delete(item);
+          changedMeasures.add(item);
           if (!isMass(item.unit)) {
             const suggested = measureDefault(item, item.unit, weights.values);
-            if (suggested?.[2] === 'estimate') pending = suggested;
+            if (suggested?.[2] === 'estimate') {
+              pending = suggested;
+              pendingEstimates.set(item, suggested);
+            }
             else if (suggested) setConversion(suggested);
           }
           if (fromGrams && item.quantity === 100 && item.unit !== 'g') {
@@ -134,11 +171,13 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           if (!pending) return;
           setConversion(pending);
           pending = undefined;
+          pendingEstimates.delete(item);
           edit();
         };
         saveMeasure.onclick = () => {
           if (!key || weight.disabled || !weight.reportValidity()) return;
           weights.set(key, item.unit, weight.valueAsNumber);
+          changedMeasures.delete(item);
           if (item.conversion?.kind !== 'estimate') item.conversion = {kind: 'personal', source: 'Padrão da Casa'};
           edit();
           notify('Padrão preparado. Salve o cardápio ou a ficha para guardar no cofre.');
@@ -210,6 +249,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       <p id="daily-vet" class="nutrition-total" aria-live="polite"></p>
       <p>Quantidades por pessoa. Use frações decimais, como 0,5 fatia ou 2 colheres.</p>${measureHelp}
       <form id="dated-menu-form">${meals.map((name, index) => `<fieldset class="nutrition-meal"><legend>${name}</legend><div data-meal="${index}"></div><p data-vet="${index}" class="nutrition-total"></p></fieldset>`).join('')}
+      ${readonly ? '' : '<button type="button" class="secondary" data-batch-measures>Aprovar e guardar medidas deste formulário</button>'}
       <button ${readonly ? 'hidden' : ''}>Salvar cardápio</button></form>${source}</section>
       ${readonly ? '' : `<dialog id="menu-food-dialog" aria-labelledby="menu-food-title">
         <h2 id="menu-food-title">Cadastrar alimento</h2>
@@ -272,7 +312,9 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       phase = phaseInput.value;
       renderMenus(state, readonly);
     };
-    main.querySelector('#dated-menu-form').onsubmit = event => {
+    const menuForm = main.querySelector('#dated-menu-form');
+    bindBatchMeasures(menuForm, notify);
+    menuForm.onsubmit = event => {
       event.preventDefault();
       if (readonly) return;
       persist(next => {
@@ -314,11 +356,12 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         <div class="nutrition-controls"><label>Rendimento final (g)<input name="yieldGrams" required type="number" min="0.001" max="100000" step="any" inputmode="decimal" value="${draft.yieldGrams}"></label>
         <label>Número de porções<input name="portions" required type="number" min="1" max="1000" inputmode="numeric" value="${draft.portions}"></label></div>
         <h2>Ingredientes</h2>${measureHelp}<div id="recipe-items"></div>
-        <p id="portion-vet" class="nutrition-total" aria-live="polite"></p><button>Salvar ficha técnica</button>
+        <p id="portion-vet" class="nutrition-total" aria-live="polite"></p><button type="button" class="secondary" data-batch-measures>Aprovar e guardar medidas deste formulário</button><button>Salvar ficha técnica</button>
       </fieldset></form>${source}</section>
       <section><details><summary>Receitas anteriores</summary>${(state.recipes ?? []).map(recipe =>
         `<article><h3>${esc(recipe.name)}</h3><p>${esc(recipe.ingredients)}</p><p>${esc(recipe.instructions)}</p><p>${recipe.portions} porções · ${format(recipe.kcal / recipe.portions)} kcal informadas por porção</p></article>`).join('') || '<p>Nenhuma receita anterior.</p>'}</details></section>`;
     const form = main.querySelector('#technical-form');
+    if (!readonly) bindBatchMeasures(form, notify);
     function update() {
       const portions = form.elements.portions.valueAsNumber;
       const yieldGrams = form.elements.yieldGrams.valueAsNumber;
