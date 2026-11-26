@@ -70,7 +70,21 @@ bind();
 main.querySelectorAll('#child-form input,#child-form textarea,#measurement-form input,#menu-form input,#recipe-form input,#recipe-form textarea').forEach(el=>el.addEventListener('input',()=>dirty=true));
 if(user?.role==='reader')main.querySelectorAll('form input,form textarea,form button').forEach(el=>el.disabled=true);
 }
+
+// Catálogo inicial TACO, 4ª edição, kcal por 100 g de parte comestível.
+const foods=[['Arroz branco cozido',128],['Feijão carioca cozido',76],['Pão francês',300],['Leite integral',61],['Banana prata crua',98],['Ovo cozido',146],['Batata inglesa cozida',52],['Cenoura cozida',30],['Peito de frango grelhado',159],['Mamão formosa cru',45],['Maçã Fuji crua',56],['Manteiga com sal',726]];
+function bindFoodPicker(){
+ const form=main.querySelector('#menu-form');if(!form)return;
+ form.querySelectorAll('.meal').forEach((meal,i)=>{
+ const panel=document.createElement('div');panel.innerHTML='<label>Alimento<select><option value="">Selecione</option>'+foods.map(([n,k],j)=>'<option value="'+j+'">'+esc(n)+' · '+k+' kcal/100 g</option>').join('')+'</select></label><label>Quantidade por pessoa (g)<input type="number" min="0.1" max="2000" step="0.1" value="100"></label><button type="button" class="secondary">Adicionar alimento</button><small>Fonte: TACO, 4ª edição. Peso comestível.</small>';
+ const select=panel.querySelector('select'),grams=panel.querySelector('input'),desc=form.elements['description-'+i],energy=form.elements['kcal-'+i];
+ panel.querySelector('button').onclick=()=>{if(select.value===''||!grams.reportValidity()||!Number(grams.value))return;const [name,k]=foods[Number(select.value)],g=Number(grams.value),label=name+' ('+g+' g)',next=(desc.value==='A definir'?'':desc.value.trim()+'; ')+label,total=Number(energy.value)+Math.round(k*g/100);if(next.length>300||total>5000)return notify('Limite da refeição atingido.');desc.value=next;energy.value=total;energy.dispatchEvent(new Event('input',{bubbles:true}));dirty=true;};
+ meal.append(panel);
+ });
+}
+
 function bind(){
+bindFoodPicker();
 main.querySelector('#recipe-form')?.addEventListener('submit',async e=>{e.preventDefault();if(saving)return;const f=new FormData(e.target);const recipe={id:crypto.randomUUID(),name:f.get('name').trim(),ingredients:f.get('ingredients').trim(),instructions:f.get('instructions').trim(),portions:Number(f.get('portions')),kcal:Number(f.get('kcal'))};state.recipes??=[];state.recipes.push(recipe);const ok=await save();render();if(ok)notify('Receita salva.');});
 async function storageStatus(){const el=main.querySelector('#storage-status');if(el)el.textContent=await navigator.storage?.persisted?.()?'Persistência concedida pelo navegador. Backups continuam necessários.':'Persistência não concedida. Há risco de remoção automática pelo navegador.';}
 if(page==='backup')storageStatus();
