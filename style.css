@@ -3,3 +3,14 @@
 [hidden]{display:none!important}#account{padding:12px 4%;background:#e5efe9}form button+button{margin:8px}article p{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .install-help{margin:12px 4%;font-size:14px;color:#456054}.install-help details{background:white;padding:12px;border-radius:12px}.install-help summary{cursor:pointer;min-height:36px}button:disabled{cursor:wait;opacity:.6}
+
+.nutrition-controls,.food-row,.week-days,.search-results{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:end}
+.nutrition-controls>label,.food-row>label{flex:1 1 135px;min-width:0;margin:0}
+.week-days{margin:16px 0}.week-days [aria-pressed=true]{background:#146653;color:white}
+.nutrition-meal,.food-row,#technical-form>fieldset{min-width:0;border:1px solid #bacdc2;border-radius:12px;padding:12px;margin:0 0 16px}
+.nutrition-meal legend,.food-row legend,#technical-form legend{font-weight:700;padding:0 6px}
+.food-row output{padding:12px 0;align-self:end}
+.search-results button{text-align:left}
+.nutrition-total{font-weight:700;color:#146653;overflow-wrap:anywhere}
+#technical-form h2{margin-top:20px}
+@media(max-width:550px){.nutrition-controls>label,.food-row>label{flex-basis:115px}.week-days button{padding:8px 12px}}

@@ -1,3 +1,4 @@
+import {validateNutrition} from './nutrition.js';
 import { days, meals, validateChild, validateMeasurement } from './domain.js';
 export function validateState(state) {
   if (!state || !Array.isArray(state.children) || state.children.length > 2000 || !state.menus) throw Error('Dados inválidos.');
@@ -28,5 +29,6 @@ export function validateState(state) {
     }
   }
   // Store only the supported schema; reject extra top-level fields.
-  if (Object.keys(state).some(k => !['children', 'menus', 'recipes'].includes(k))) throw Error('Campos desconhecidos.');
+  if (Object.keys(state).some(k => !['children', 'menus', 'recipes', 'datedMenus', 'technicalRecipes'].includes(k))) throw Error('Campos desconhecidos.');
+  validateNutrition(state);
 }
