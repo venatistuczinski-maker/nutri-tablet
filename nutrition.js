@@ -1,8 +1,10 @@
 import {meals, validDate} from './domain.js';
 import {foodById} from './foods.js';
 
+import {householdMeasures} from './household-measures.js';
+
 export const phases = ['planned', 'served'];
-export const measures = ['g', 'colher de sopa', 'colher de chá', 'xícara', 'concha', 'unidade', 'porção'];
+export const measures = ['g', ...householdMeasures];
 export const nutrients = ['kcal', 'protein', 'carbs', 'fat'];
 const finite = (value, max) => Number.isFinite(value) && value > 0 && value <= max;
 
@@ -61,8 +63,7 @@ function validateItems(items, allowRecipe) {
   if (!Array.isArray(items) || items.length > 100) throw Error('Limite de 100 itens por refeição ou ficha.');
   for (const item of items) {
     if (!item || !measures.includes(item.unit) || !finite(item.quantity, 100000) ||
-      !finite(grams(item), 100000) || (item.unit === 'g' ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000)) ||
-      (item.unit === 'porção' && !item.recipe)) throw Error('Revise a quantidade e o peso por medida.');
+      !finite(grams(item), 100000) || (item.unit === 'g' ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000))) throw Error('Revise a quantidade e o peso por medida.');
     if (item.food !== undefined) {
       if (!foodById.has(item.food) || item.recipe !== undefined || item.customFood !== undefined) throw Error('Alimento inválido.');
     } else if (item.customFood !== undefined) {
@@ -71,8 +72,8 @@ function validateItems(items, allowRecipe) {
     } else {
       if (!allowRecipe) throw Error('Selecione um alimento do catálogo.');
       validateRecipe(item.recipe);
-      if (item.unit === 'porção' && item.gramsPerUnit !== item.recipe.yieldGrams / item.recipe.portions) {
-        throw Error('Peso por porção incompatível com a ficha.');
+      if (item.recipeId !== undefined && (typeof item.recipeId !== 'string' || !/^[\da-f-]{36}$/.test(item.recipeId))) {
+        throw Error('Identificador de ficha inválido.');
       }
     }
   }
@@ -91,6 +92,7 @@ export function validateRecipe(recipe) {
 export function validateCustomFood(food) {
   if (!food || typeof food.id !== 'string' || !/^[\da-f-]{36}$/.test(food.id) ||
     typeof food.name !== 'string' || !food.name.trim() || food.name.length > 100 ||
+    (food.measureReference !== undefined && food.measureReference !== 'geleia') ||
     typeof food.source !== 'string' || !food.source.trim() || food.source.length > 200 ||
     nutrients.some(key => !Number.isFinite(food[key]) || food[key] < 0 || food[key] > (key === 'kcal' ? 1000 : 100))) {
     throw Error('Revise o nome, a fonte e os nutrientes por 100 g.');
@@ -98,6 +100,19 @@ export function validateCustomFood(food) {
 }
 
 export function validateNutrition(state) {
+  if (state.measurePreferences !== undefined) {
+    const prefs = state.measurePreferences;
+    if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs) || Object.keys(prefs).length > 5000) {
+      throw Error('Padrões de medidas inválidos.');
+    }
+    for (const [key, units] of Object.entries(prefs)) {
+      if (!/^(taco:\d{1,3}|(?:local|ficha):[\da-f-]{36})$/.test(key) ||
+        !units || typeof units !== 'object' || Array.isArray(units) ||
+        Object.entries(units).some(([unit, weight]) => !householdMeasures.includes(unit) || !finite(weight, 100000))) {
+        throw Error('Padrão de medida inválido.');
+      }
+    }
+  }
   if (state.customFoods !== undefined) {
     if (!Array.isArray(state.customFoods) || state.customFoods.length > 2000) throw Error('Catálogo local inválido.');
     const ids = new Set();

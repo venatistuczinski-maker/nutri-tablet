@@ -1,3 +1,4 @@
+import {ibgeMeasuresUrl, measureDefault, measureKey} from './household-measures.js';
 import {days, meals, validDate} from './domain.js';
 import {foods, tacoUrl} from './foods.js';
 import {searchCatalog} from './food-search.js';
@@ -14,14 +15,30 @@ const nutrientNames = {kcal: 'Energia (kcal)', protein: 'Proteínas (g)', carbs:
 const nutrientLabel = values => `VET ${format(values.kcal)} kcal · Proteínas ${format(values.protein)} g · Carboidratos ${format(values.carbs)} g · Lipídios ${format(values.fat)} g`;
 const source = `<p class="muted">Valores por peso comestível. Traços são tratados como zero. <a href="${tacoUrl}" target="_blank" rel="noopener noreferrer">TACO, NEPA/UNICAMP, 4ª edição, 2011</a> · <a href="https://www.tbca.net.br/" target="_blank" rel="noopener noreferrer">Consultar TBCA online</a></p>`;
 
+const measureHelp = `<p>Padrões de referência do <a href="${ibgeMeasuresUrl}" target="_blank" rel="noopener noreferrer">IBGE · POF 2008–2009</a>. Para usar um utensílio diferente ou uma medida sem referência, pese o alimento. Escolha “Guardar padrão” e salve o cardápio ou a ficha para reutilizar esse peso.</p>`;
+
+function measureDraft(state) {
+  const values = structuredClone(state.measurePreferences ?? {});
+  let changed = false;
+  return {values, set(key, unit, weight) {
+    values[key] ??= {};
+    values[key][unit] = weight;
+    changed = true;
+  }, commit(next) {
+    if (changed) next.measurePreferences = values;
+  }};
+}
+
 function customFoodFields() {
   return `<label>Nome<input name="name" required maxlength="100"></label>
     <label>Fonte dos valores<input name="source" required maxlength="200" placeholder="Ex.: rótulo do produto"></label>
+    <label>Referência de medidas<select name="measureReference"><option value="">Pesagem própria</option><option value="geleia">Geleia de frutas · IBGE</option></select></label>
     <div class="nutrition-controls">${nutrients.map(key => `<label>${nutrientNames[key]}<input name="${key}" type="number" min="0" max="${key === 'kcal' ? 1000 : 100}" step="any" required inputmode="decimal"></label>`).join('')}</div>`;
 }
 
 function readCustomFood(form) {
   const food = {id: crypto.randomUUID(), name: form.elements.name.value.trim(), source: form.elements.source.value.trim()};
+  if (form.elements.measureReference.value) food.measureReference = form.elements.measureReference.value;
   for (const key of nutrients) food[key] = form.elements[key].valueAsNumber;
   validateCustomFood(food);
   return food;
@@ -32,9 +49,9 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
   const reset = () => { date = localDate(); phase = 'planned'; people = 30; recipeId = ''; };
   reset();
 
-  function itemEditor(items, customFoods, recipes, changed, update, readonly, registerFood) {
+  function itemEditor(items, customFoods, recipes, weights, changed, update, readonly, registerFood) {
     const root = document.createElement('div');
-    const preparations = Object.values(recipes).map(recipe => ({name: recipe.name, detail: 'Ficha técnica', item: {recipe}}));
+    const preparations = Object.entries(recipes).map(([recipeId, recipe]) => ({name: recipe.name, detail: 'Ficha técnica', item: {recipe, recipeId}}));
     root.innerHTML = `<div class="food-rows"></div><div class="picker" ${readonly ? 'hidden' : ''}><label>Buscar alimento${Object.keys(recipes).length ? ' ou preparação' : ''}<input type="search" autocomplete="off"></label><p class="search-status" role="status"></p><div class="search-results"></div><button type="button" class="secondary" data-more-food hidden>Mostrar mais resultados</button>${registerFood ? '<button type="button" class="secondary" data-register-food>Cadastrar alimento</button>' : ''}</div>`;
     const rows = root.querySelector('.food-rows');
     const search = root.querySelector('input[type=search]');
@@ -47,17 +64,25 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         row.disabled = readonly;
         row.innerHTML = `<legend>${esc(itemFood(item)?.name ?? item.recipe.name)}</legend>
           <label>Quantidade<input data-quantity type="number" min="0.001" max="100000" step="any" inputmode="decimal" required value="${item.quantity}"></label>
-          <label>Medida<select>${measures.filter(unit => unit !== 'porção' || item.recipe).map(unit => `<option ${unit === item.unit ? 'selected' : ''}>${unit}</option>`).join('')}</select></label>
+          <label>Medida<select>${measures.map(unit => `<option ${unit === item.unit ? 'selected' : ''}>${unit}</option>`).join('')}</select></label>
           <label data-weight-label>Gramas por medida<input data-weight type="number" min="0.001" max="100000" step="any" inputmode="decimal" value="${item.gramsPerUnit ?? ''}"></label>
-          <output></output><button type="button" class="secondary" data-remove>Excluir item</button>`;
+          <output></output><small data-measure-source></small><button type="button" class="secondary" data-save-measure>Guardar padrão</button><button type="button" class="secondary" data-remove>Excluir item</button>`;
         const quantity = row.querySelector('[data-quantity]');
         const select = row.querySelector('select');
         const weight = row.querySelector('[data-weight]');
         const display = row.querySelector('output');
+        const measureSource = row.querySelector('[data-measure-source]');
+        const saveMeasure = row.querySelector('[data-save-measure]');
+        const key = measureKey(item);
         function sync() {
-          weight.disabled = item.unit === 'g' || item.unit === 'porção';
+          weight.disabled = item.unit === 'g';
           weight.required = !weight.disabled;
           row.querySelector('[data-weight-label]').hidden = item.unit === 'g';
+          saveMeasure.hidden = item.unit === 'g' || !key || readonly;
+          measureSource.hidden = item.unit === 'g';
+          const suggested = measureDefault(item, item.unit, weights.values);
+          measureSource.textContent = suggested && item.gramsPerUnit === suggested[0] ? suggested[1]
+            : Number.isFinite(item.gramsPerUnit) ? 'Peso informado neste item' : 'Informe o peso em gramas desta medida.';
           quantity.setCustomValidity(grams(item) > 100000 ? 'Limite de 100.000 g por item.' : '');
           display.textContent = Number.isFinite(grams(item)) && grams(item) > 0 ? `${format(grams(item))} g` : 'Informe o peso';
         }
@@ -65,12 +90,26 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         quantity.oninput = () => { item.quantity = quantity.valueAsNumber; edit(); };
         weight.oninput = () => { item.gramsPerUnit = weight.valueAsNumber; edit(); };
         select.onchange = () => {
+          const fromGrams = item.unit === 'g';
           item.unit = select.value;
           delete item.gramsPerUnit;
-          if (item.unit === 'porção') item.gramsPerUnit = item.recipe.yieldGrams / item.recipe.portions;
+          if (item.unit !== 'g') {
+            const suggested = measureDefault(item, item.unit, weights.values);
+            if (suggested) item.gramsPerUnit = suggested[0];
+            if (fromGrams && item.quantity === 100) {
+              item.quantity = 1;
+              quantity.value = 1;
+            }
+          }
           weight.value = item.gramsPerUnit ?? '';
           edit();
-          if (!weight.disabled) weight.focus();
+          if (!weight.disabled && !weight.value) weight.focus();
+        };
+        saveMeasure.onclick = () => {
+          if (!key || weight.disabled || !weight.reportValidity()) return;
+          weights.set(key, item.unit, weight.valueAsNumber);
+          edit();
+          notify('Padrão preparado. Salve o cardápio ou a ficha para guardar no cofre.');
         };
         row.querySelector('[data-remove]').onclick = () => {
           items.splice(index, 1); changed(); renderRows(); update(); search.focus();
@@ -86,7 +125,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     function addItem(choice) {
       if (items.length >= 100) return notify('Limite de 100 itens.');
       const item = {...choice.item, unit: 'g', quantity: 100};
-      if (item.recipe) Object.assign(item, {unit: 'porção', quantity: 1, gramsPerUnit: item.recipe.yieldGrams / item.recipe.portions});
+      if (item.recipe) Object.assign(item, {unit: 'porção', quantity: 1,
+        gramsPerUnit: measureDefault(item, 'porção', weights.values)[0]});
       items.push(item);
       search.value = '';
       renderResults();
@@ -127,13 +167,14 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     const entries = structuredClone(mealItems(state, date, phase));
     const customFoods = [...(state.customFoods ?? [])];
     const newFoods = [];
+    const weights = measureDraft(state);
     main.innerHTML = `<h1>Cardápio semanal</h1>
       <section><div class="nutrition-controls"><label>Data do cardápio<input id="menu-date" type="date" value="${date}"></label>
       <label>Registro<select id="menu-phase"><option value="planned">Planejado</option><option value="served">Realizado</option></select></label></div>
       <div class="week-days" aria-label="Dias da semana">${dates.map((day, index) => `<button type="button" class="secondary" data-date="${day}" aria-pressed="${day === date}">${days[index]} ${dateLabel(day).slice(0, 5)}${Object.keys(state.datedMenus?.[day] ?? {}).length ? ' •' : ''}</button>`).join('')}</div>
       <label>Histórico de datas registradas<select id="menu-history"><option value="">Selecionar data</option>${Object.keys(state.datedMenus ?? {}).sort().reverse().map(day => `<option value="${day}" ${day === date ? 'selected' : ''}>${dateLabel(day)}</option>`).join('')}</select></label>
       <p id="daily-vet" class="nutrition-total" aria-live="polite"></p>
-      <p>Quantidades por pessoa. Para medidas caseiras, informe o peso em gramas da sua medida.</p>
+      <p>Quantidades por pessoa. Use frações decimais, como 0,5 fatia ou 2 colheres.</p>${measureHelp}
       <form id="dated-menu-form">${meals.map((name, index) => `<fieldset class="nutrition-meal"><legend>${name}</legend><div data-meal="${index}"></div><p data-vet="${index}" class="nutrition-total"></p></fieldset>`).join('')}
       <button ${readonly ? 'hidden' : ''}>Salvar cardápio</button></form>${source}</section>
       ${readonly ? '' : `<dialog id="menu-food-dialog" aria-labelledby="menu-food-title">
@@ -175,7 +216,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       dialog.querySelector('[data-cancel-food]').onclick = () => dialog.close();
     }
     entries.forEach((items, index) => main.querySelector(`[data-meal="${index}"]`)
-      .append(itemEditor(items, customFoods, state.technicalRecipes ?? {}, markDirty, update, readonly, addFood)));
+      .append(itemEditor(items, customFoods, state.technicalRecipes ?? {}, weights, markDirty, update, readonly, addFood)));
     update();
     const dateInput = main.querySelector('#menu-date');
     const phaseInput = main.querySelector('#menu-phase');
@@ -201,6 +242,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       event.preventDefault();
       if (readonly) return;
       persist(next => {
+        weights.commit(next);
         if (newFoods.length) {
           next.customFoods ??= [];
           next.customFoods.push(...newFoods);
@@ -226,6 +268,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
   }
 
   function renderRecipes(state, readonly) {
+    const weights = measureDraft(state);
     const recipes = state.technicalRecipes ?? {};
     const draft = structuredClone(recipes[recipeId] ?? {name: '', instructions: '', portions: 1, yieldGrams: '', items: []});
     main.innerHTML = `<h1>Fichas técnicas</h1>
@@ -236,7 +279,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         <label>Modo de preparo<textarea name="instructions" maxlength="5000">${esc(draft.instructions)}</textarea></label>
         <div class="nutrition-controls"><label>Rendimento final (g)<input name="yieldGrams" required type="number" min="0.001" max="100000" step="any" inputmode="decimal" value="${draft.yieldGrams}"></label>
         <label>Número de porções<input name="portions" required type="number" min="1" max="1000" inputmode="numeric" value="${draft.portions}"></label></div>
-        <h2>Ingredientes</h2><div id="recipe-items"></div>
+        <h2>Ingredientes</h2>${measureHelp}<div id="recipe-items"></div>
         <p id="portion-vet" class="nutrition-total" aria-live="polite"></p><button>Salvar ficha técnica</button>
       </fieldset></form>${source}</section>
       <section><details><summary>Receitas anteriores</summary>${(state.recipes ?? []).map(recipe =>
@@ -250,7 +293,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         ? `Por porção (${format(yieldGrams / portions)} g) · ${nutrientLabel(totals(completeItems(draft.items), portions))}`
         : 'Informe rendimento e número de porções.';
     }
-    main.querySelector('#recipe-items').append(itemEditor(draft.items, state.customFoods ?? [], {}, markDirty, update, readonly));
+    main.querySelector('#recipe-items').append(itemEditor(draft.items, state.customFoods ?? [], {}, weights, markDirty, update, readonly));
     for (const name of ['name', 'instructions', 'yieldGrams', 'portions']) form.elements[name].oninput = () => { markDirty(); update(); };
     update();
     main.querySelector('#technical-recipe').onchange = event => {
@@ -268,6 +311,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       try { validateRecipe(draft); } catch (error) { return notify(error.message); }
       const id = recipeId || crypto.randomUUID();
       await persist(next => {
+        weights.commit(next);
         next.technicalRecipes ??= {};
         next.technicalRecipes[id] = draft;
       }, 'Ficha técnica salva.', () => { recipeId = id; });

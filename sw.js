@@ -1,9 +1,9 @@
-const VERSION='663dca300d78e6af';
+const VERSION='06fa7c90f60b5980';
 const BASE=new URL('./',self.registration.scope);
 const PREFIX='nutrir-shell:'+BASE.pathname+':';
 const CACHE=PREFIX+VERSION;
 const CATALOG_HASH='530211a22ab1804f1ab7f8ae53f8b0aa26dded3b8929a5be7503048bbfc118ce';
-const ASSETS=['./','./index.html','./app.js','./local-vault.js','./validation.js','./domain.js','./foods.js','./food-search.js','./nutrition.js','./menu-ui.js','./app-update.js','./reports.js','./style.css','./icon-192.png','./icon-512.png','./manifest.webmanifest','./icon.svg'].map(path=>new URL(path,BASE).href);
+const ASSETS=['./','./index.html','./app.js','./local-vault.js','./validation.js','./domain.js','./foods.js','./household-measures.js','./food-search.js','./nutrition.js','./menu-ui.js','./app-update.js','./reports.js','./style.css','./icon-192.png','./icon-512.png','./manifest.webmanifest','./icon.svg'].map(path=>new URL(path,BASE).href);
 
 function supportsUpdatePrompt(worker){
   return new Promise(resolve=>{
