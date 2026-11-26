@@ -29,6 +29,6 @@ export function validateState(state) {
     }
   }
   // Store only the supported schema; reject extra top-level fields.
-  if (Object.keys(state).some(k => !['children', 'menus', 'recipes', 'datedMenus', 'technicalRecipes'].includes(k))) throw Error('Campos desconhecidos.');
+  if (Object.keys(state).some(k => !['children', 'menus', 'recipes', 'datedMenus', 'technicalRecipes', 'customFoods'].includes(k))) throw Error('Campos desconhecidos.');
   validateNutrition(state);
 }

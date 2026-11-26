@@ -1,11 +1,17 @@
 import {days, meals, validDate} from './domain.js';
-import {foods, foodById, tacoUrl} from './foods.js';
-import {grams, localDate, mealItems, measures, shoppingList, totals, validateRecipe, weekDates} from './nutrition.js';
+import {foods, tacoUrl} from './foods.js';
+import {grams, itemFood, localDate, mealItems, measures, nutrients, shoppingList, totals, validateCustomFood, validateRecipe, weekDates} from './nutrition.js';
 
 const number = new Intl.NumberFormat('pt-BR', {maximumFractionDigits: 2});
 const format = value => number.format(value);
 const dateLabel = date => date.split('-').reverse().join('/');
 const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+const matchesName = (name, query) => query.split(/\s+/).every(word => normalize(name).includes(word));
+const foodChoices = customFoods => [
+  ...customFoods.map(food => ({name: food.name, detail: food.source, food, item: {customFood: food}})),
+  ...foods.map(food => ({name: food.name, detail: `TACO nº ${food.id}`, food, item: {food: food.id}})),
+];
+const nutrientNames = {kcal: 'Energia (kcal)', protein: 'Proteínas (g)', carbs: 'Carboidratos (g)', fat: 'Lipídios (g)'};
 const nutrientLabel = values => `VET ${format(values.kcal)} kcal · Proteínas ${format(values.protein)} g · Carboidratos ${format(values.carbs)} g · Lipídios ${format(values.fat)} g`;
 const source = `<p class="muted">Valores por peso comestível. Traços são tratados como zero. <a href="${tacoUrl}" target="_blank" rel="noopener noreferrer">TACO, NEPA/UNICAMP, 4ª edição, 2011</a> · <a href="https://www.tbca.net.br/" target="_blank" rel="noopener noreferrer">Consultar TBCA online</a></p>`;
 
@@ -14,10 +20,10 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
   const reset = () => { date = localDate(); phase = 'planned'; people = 30; recipeId = ''; };
   reset();
 
-  function itemEditor(items, recipes, changed, update, readonly) {
+  function itemEditor(items, customFoods, recipes, changed, update, readonly) {
     const root = document.createElement('div');
     const choices = [
-      ...foods.map(food => ({name: food.name, detail: `TACO nº ${food.id}`, item: {food: food.id}})),
+      ...foodChoices(customFoods),
       ...Object.values(recipes).map(recipe => ({name: recipe.name, detail: 'Ficha técnica', item: {recipe}})),
     ];
     root.innerHTML = `<div class="food-rows"></div><div class="picker" ${readonly ? 'hidden' : ''}><label>Buscar alimento${Object.keys(recipes).length ? ' ou preparação' : ''}<input type="search" autocomplete="off"></label><div class="search-results"></div></div>`;
@@ -30,7 +36,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         const row = document.createElement('fieldset');
         row.className = 'food-row';
         row.disabled = readonly;
-        row.innerHTML = `<legend>${esc(item.food ? foodById.get(item.food).name : item.recipe.name)}</legend>
+        row.innerHTML = `<legend>${esc(itemFood(item)?.name ?? item.recipe.name)}</legend>
           <label>Quantidade<input data-quantity type="number" min="0.001" max="100000" step="any" inputmode="decimal" required value="${item.quantity}"></label>
           <label>Medida<select>${measures.filter(unit => unit !== 'porção' || item.recipe).map(unit => `<option ${unit === item.unit ? 'selected' : ''}>${unit}</option>`).join('')}</select></label>
           <label data-weight-label>Gramas por medida<input data-weight type="number" min="0.001" max="100000" step="any" inputmode="decimal" value="${item.gramsPerUnit ?? ''}"></label>
@@ -69,7 +75,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       results.replaceChildren();
       const query = normalize(search.value.trim());
       if (!query) return;
-      const matches = choices.filter(choice => query.split(/\s+/).every(word => normalize(choice.name).includes(word))).slice(0, 12);
+      const matches = choices.filter(choice => matchesName(choice.name, query)).slice(0, 12);
       if (!matches.length) results.textContent = 'Nenhum resultado.';
       for (const choice of matches) {
         const button = document.createElement('button');
@@ -116,7 +122,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       main.querySelector('#daily-vet').textContent = 'Dia · ' + nutrientLabel(totals(completeItems(entries.flat())));
     }
     entries.forEach((items, index) => main.querySelector(`[data-meal="${index}"]`)
-      .append(itemEditor(items, state.technicalRecipes ?? {}, markDirty, update, readonly)));
+      .append(itemEditor(items, state.customFoods ?? [], state.technicalRecipes ?? {}, markDirty, update, readonly)));
     update();
     const dateInput = main.querySelector('#menu-date');
     const phaseInput = main.querySelector('#menu-phase');
@@ -187,7 +193,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         ? `Por porção (${format(yieldGrams / portions)} g) · ${nutrientLabel(totals(completeItems(draft.items), portions))}`
         : 'Informe rendimento e número de porções.';
     }
-    main.querySelector('#recipe-items').append(itemEditor(draft.items, {}, markDirty, update, readonly));
+    main.querySelector('#recipe-items').append(itemEditor(draft.items, state.customFoods ?? [], {}, markDirty, update, readonly));
     for (const name of ['name', 'instructions', 'yieldGrams', 'portions']) form.elements[name].oninput = () => { markDirty(); update(); };
     update();
     main.querySelector('#technical-recipe').onchange = event => {
@@ -210,5 +216,48 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       }, 'Ficha técnica salva.', () => { recipeId = id; });
     };
   }
-  return {renderMenus, renderRecipes, reset};
+  function renderFoods(state, readonly) {
+    const choices = foodChoices(state.customFoods ?? []);
+    main.innerHTML = `<h1>Banco de alimentos</h1><section>
+      <label>Buscar no catálogo<input id="catalog-search" type="search" autocomplete="off"></label>
+      <p id="catalog-count" role="status"></p><ul id="catalog-list"></ul>
+      <button type="button" class="secondary" id="catalog-more">Mostrar mais alimentos</button>${source}</section>
+      <section ${readonly ? 'hidden' : ''}><h2>Cadastrar alimento</h2>
+      <p>Informe os valores por 100 g de parte comestível e a fonte usada. O cadastro fica no cofre desta conta.</p>
+      <form id="custom-food-form"><label>Nome<input name="name" required maxlength="100"></label>
+      <label>Fonte dos valores<input name="source" required maxlength="200" placeholder="Ex.: rótulo do produto"></label>
+      <div class="nutrition-controls">${nutrients.map(key => `<label>${nutrientNames[key]}<input name="${key}" type="number" min="0" max="${key === 'kcal' ? 1000 : 100}" step="any" required inputmode="decimal"></label>`).join('')}</div>
+      <button>Salvar alimento</button></form></section>`;
+
+    const search = main.querySelector('#catalog-search');
+    const list = main.querySelector('#catalog-list');
+    const more = main.querySelector('#catalog-more');
+    let limit = 30;
+    function update() {
+      const query = normalize(search.value.trim());
+      const matches = choices.filter(choice => matchesName(choice.name, query));
+      main.querySelector('#catalog-count').textContent = `${matches.length} alimentos encontrados.`;
+      list.innerHTML = matches.slice(0, limit).map(({name, detail, food}) =>
+        `<li><strong>${esc(name)}</strong> · ${esc(detail)}<br>${nutrientLabel(food)} por 100 g</li>`).join('');
+      more.hidden = matches.length <= limit;
+    }
+    search.oninput = () => {limit = 30; update();};
+    more.onclick = () => {limit += 30; update();};
+    update();
+    const form = main.querySelector('#custom-food-form');
+    form.oninput = markDirty;
+    form.onsubmit = event => {
+      event.preventDefault();
+      if (readonly) return;
+      const food = {id: crypto.randomUUID(), name: form.elements.name.value.trim(), source: form.elements.source.value.trim()};
+      for (const key of nutrients) food[key] = form.elements[key].valueAsNumber;
+      try {validateCustomFood(food);} catch (error) {return notify(error.message);}
+      persist(next => {
+        next.customFoods ??= [];
+        next.customFoods.push(food);
+      }, 'Alimento salvo.');
+    };
+  }
+
+  return {renderMenus, renderRecipes, renderFoods, reset};
 }

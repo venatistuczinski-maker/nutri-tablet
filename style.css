@@ -14,3 +14,24 @@
 .nutrition-total{font-weight:700;color:#146653;overflow-wrap:anywhere}
 #technical-form h2{margin-top:20px}
 @media(max-width:550px){.nutrition-controls>label,.food-row>label{flex-basis:115px}.week-days button{padding:8px 12px}}
+
+.app-update{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}
+.app-update:has(button:not([hidden])){margin-bottom:12px}
+
+#catalog-list{padding-left:22px}
+#catalog-list li{margin:10px 0}
+#print-report table{width:100%;border-collapse:collapse;font-size:14px;text-align:left}
+#print-report th,#print-report td{padding:8px;border-bottom:1px solid #bacdc2}
+.report-total{font-weight:700}
+.report-brand{color:#456054}
+#print-report{overflow:auto}
+@media print{
+  @page{margin:12mm}
+  body:has(#print-report){color:#000;background:white;font-size:11pt}
+  body:has(#print-report)>:not(.shell),body:has(#print-report) nav,
+  body:has(#print-report) main>:not(#print-report){display:none!important}
+  body:has(#print-report) .shell{display:block}
+  body:has(#print-report) main,#print-report{padding:0;margin:0;border:0;overflow:visible}
+  #print-report table{font-size:10pt}
+  #print-report tr{break-inside:avoid}
+}

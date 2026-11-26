@@ -1,3 +1,5 @@
+import {renderReports} from './reports.js';
+import {setupAppUpdate} from './app-update.js';
 import { LocalVault } from './local-vault.js';
 import {validateChild,validateMeasurement} from './domain.js';
 import {createNutritionUI} from './menu-ui.js';
@@ -57,7 +59,7 @@ async function load(){
   document.querySelector('nav').hidden=false;document.querySelector('[data-page=backup]').hidden=mode!=='local';document.querySelector('nav p').textContent=mode==='local'?'Cofre local criptografado. Somente dados fictícios.':'Servidor conectado. Somente dados fictícios.';
   document.querySelector('#account')?.remove();const account=document.createElement('div');account.id='account';account.className='row';
   const name=document.createElement('span');name.textContent=user.username+(mode==='local'?' · Cofre local · ':' · Servidor · ')+({admin:'Administrador',editor:'Editor',reader:'Leitura'}[user.role]);
-  const logout=document.createElement('button');logout.textContent=mode==='local'?'Bloquear / Sair':'Sair';logout.onclick=async()=>{try{await api('logout',{method:'POST',body:'{}'});user=null;state={children:[],menus:{}};committed=null;csrf='';clearTimeout(lockTimer);login();}catch(e){notify(e.message);}};account.append(name,logout);document.querySelector('header').after(account);render();
+  const logout=document.createElement('button');logout.textContent=mode==='local'?'Bloquear / Sair':'Sair';logout.onclick=async()=>{if(saving)return;try{await api('logout',{method:'POST',body:'{}'});user=null;state={children:[],menus:{}};committed=null;csrf='';clearTimeout(lockTimer);login();}catch(e){notify(e.message);}};account.append(name,logout);document.querySelector('header').after(account);render();
 }
 function title(k,t,p){return `<div class="eyebrow">${k}</div><h1>${t}</h1><p class="muted">${p}</p>`;}
 function options(){return state.children.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.name)}</option>`).join('');}
@@ -68,6 +70,8 @@ if(page==='children')main.innerHTML=title('Pessoas','Crianças e adolescentes','
 if(page==='growth'){const c=state.children.find(c=>c.id===selected)||state.children[0];selected=c?.id;main.innerHTML=title('Acompanhamento','Evolução nutricional','Peso e altura ao longo do tempo. Sem classificação ou diagnóstico automático.')+`<label>Pessoa acompanhada<select id="person">${options()}</select></label>`+(c?`<div class="grid"><section>${chart(c,'weight','Peso (kg)','#146653')}</section><section>${chart(c,'height','Altura (cm)','#b37a2d')}</section></div><section><h2>Registrar peso e altura</h2><form id="measurement-form"><div class="grid"><label>Data<input name="date" type="date" min="${c.birth}" max="${new Date().toISOString().slice(0,10)}" required></label><label>Peso (kg)<input name="weight" type="number" step="0.1" min="0.1" max="300" required inputmode="decimal"></label><label>Altura (cm)<input name="height" type="number" step="0.1" min="20" max="250" required inputmode="decimal"></label></div><button>Salvar avaliação</button></form><h2 style="margin-top:24px">Histórico</h2>${[...c.measurements].sort((a,b)=>b.date.localeCompare(a.date)).map(m=>`<p>${fmt(m.date)} · ${m.weight} kg · ${m.height} cm</p>`).join('')||'<p>Sem registros.</p>'}</section>`:'<p>Cadastre uma pessoa para começar.</p>');}
 if(page==='menus')nutritionUI.renderMenus(state,user.role==='reader');
 if(page==='recipes')nutritionUI.renderRecipes(state,user.role==='reader');
+if(page==='foods')nutritionUI.renderFoods(state,user.role==='reader');
+if(page==='reports')renderReports(main,state,esc,selected);
 if(page==='backup'&&mode==='local')main.innerHTML=title('Proteção local','Backups e armazenamento','Faça uma cópia antes de restaurar. Perder a senha e o backup pode significar perder todos os registros.')+`<section><h2>Armazenamento do tablet</h2><p id="storage-status">Verificando persistência…</p><button id="persist" class="secondary">Solicitar armazenamento persistente</button><p>Mesmo com persistência, limpar dados do Chrome, remover o perfil ou perder o tablet pode apagar o cofre. Guarde cópias em outro dispositivo ou pendrive.</p></section><div class="grid"><section><h2>Exportar backup criptografado</h2><form id="export-form"><label>Senha do backup<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label><label>Confirmar senha do backup<input name="confirm" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label><button>Baixar backup criptografado</button></form><p>A senha pode ser diferente da conta local. Guarde-a separada do arquivo. Confira o arquivo na pasta Downloads.</p></section><section><h2>Restaurar backup</h2><form id="restore-form"><label>Arquivo de backup<input name="file" type="file" accept=".nutrir,application/json" required></label><label>Senha usada no backup<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="off"></label><button>Verificar e restaurar backup</button></form><p>A restauração substitui todos os registros desta conta local; não mescla dispositivos. A senha de entrada atual é mantida. Outros cofres não são alterados.</p></section></div>`;
 bind();
 main.querySelectorAll('#child-form input,#child-form textarea,#measurement-form input').forEach(el=>el.addEventListener('input',()=>dirty=true));
@@ -108,11 +112,7 @@ window.addEventListener('online',refresh);
 setInterval(refresh,15000);
 window.addEventListener('beforeunload',e=>{if(dirty||saving){e.preventDefault();e.returnValue='';}});
 if(mode==='server'){try{const session=await api('session');user=session.user;csrf=session.csrf;await load();}catch{login();}}else login();
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register(new URL('./sw.js',document.baseURI)).then(()=>navigator.serviceWorker.ready).then(()=>{
-    document.querySelector('#offline-status').textContent='Arquivos prontos para uso offline neste navegador. Mantenha backups fora do tablet.';
-  }).catch(()=>{document.querySelector('#offline-status').textContent='Não foi possível preparar o uso offline. Mantenha a conexão e tente novamente.';});
-}else document.querySelector('#offline-status').textContent='Este navegador não oferece o recurso offline necessário. Use Chrome Android atualizado.';
+setupAppUpdate({canReload:()=>!dirty&&!saving,notify});
 
 for(const event of ['pointerdown','keydown','input'])document.addEventListener(event,activity,{passive:true});
 document.addEventListener('visibilitychange',()=>{clearTimeout(hiddenTimer);if(document.hidden){hiddenAt=Date.now();if(mode==='local'&&user)hiddenTimer=setTimeout(lock,60000);}else if(hiddenAt&&Date.now()-hiddenAt>=60000&&mode==='local'&&user){hiddenAt=0;lock();}});
