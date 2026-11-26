@@ -1,12 +1,11 @@
 import {days, meals, validDate} from './domain.js';
 import {foods, tacoUrl} from './foods.js';
+import {searchCatalog} from './food-search.js';
 import {grams, itemFood, localDate, mealItems, measures, nutrients, shoppingList, totals, validateCustomFood, validateRecipe, weekDates} from './nutrition.js';
 
 const number = new Intl.NumberFormat('pt-BR', {maximumFractionDigits: 2});
 const format = value => number.format(value);
 const dateLabel = date => date.split('-').reverse().join('/');
-const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-const matchesName = (name, query) => query.split(/\s+/).every(word => normalize(name).includes(word));
 const foodChoices = customFoods => [
   ...customFoods.map(food => ({name: food.name, detail: food.source, food, item: {customFood: food}})),
   ...foods.map(food => ({name: food.name, detail: `TACO nº ${food.id}`, food, item: {food: food.id}})),
@@ -15,18 +14,28 @@ const nutrientNames = {kcal: 'Energia (kcal)', protein: 'Proteínas (g)', carbs:
 const nutrientLabel = values => `VET ${format(values.kcal)} kcal · Proteínas ${format(values.protein)} g · Carboidratos ${format(values.carbs)} g · Lipídios ${format(values.fat)} g`;
 const source = `<p class="muted">Valores por peso comestível. Traços são tratados como zero. <a href="${tacoUrl}" target="_blank" rel="noopener noreferrer">TACO, NEPA/UNICAMP, 4ª edição, 2011</a> · <a href="https://www.tbca.net.br/" target="_blank" rel="noopener noreferrer">Consultar TBCA online</a></p>`;
 
+function customFoodFields() {
+  return `<label>Nome<input name="name" required maxlength="100"></label>
+    <label>Fonte dos valores<input name="source" required maxlength="200" placeholder="Ex.: rótulo do produto"></label>
+    <div class="nutrition-controls">${nutrients.map(key => `<label>${nutrientNames[key]}<input name="${key}" type="number" min="0" max="${key === 'kcal' ? 1000 : 100}" step="any" required inputmode="decimal"></label>`).join('')}</div>`;
+}
+
+function readCustomFood(form) {
+  const food = {id: crypto.randomUUID(), name: form.elements.name.value.trim(), source: form.elements.source.value.trim()};
+  for (const key of nutrients) food[key] = form.elements[key].valueAsNumber;
+  validateCustomFood(food);
+  return food;
+}
+
 export function createNutritionUI({main, esc, notify, discard, markDirty, persist}) {
   let date, phase, people, recipeId;
   const reset = () => { date = localDate(); phase = 'planned'; people = 30; recipeId = ''; };
   reset();
 
-  function itemEditor(items, customFoods, recipes, changed, update, readonly) {
+  function itemEditor(items, customFoods, recipes, changed, update, readonly, registerFood) {
     const root = document.createElement('div');
-    const choices = [
-      ...foodChoices(customFoods),
-      ...Object.values(recipes).map(recipe => ({name: recipe.name, detail: 'Ficha técnica', item: {recipe}})),
-    ];
-    root.innerHTML = `<div class="food-rows"></div><div class="picker" ${readonly ? 'hidden' : ''}><label>Buscar alimento${Object.keys(recipes).length ? ' ou preparação' : ''}<input type="search" autocomplete="off"></label><div class="search-results"></div></div>`;
+    const preparations = Object.values(recipes).map(recipe => ({name: recipe.name, detail: 'Ficha técnica', item: {recipe}}));
+    root.innerHTML = `<div class="food-rows"></div><div class="picker" ${readonly ? 'hidden' : ''}><label>Buscar alimento${Object.keys(recipes).length ? ' ou preparação' : ''}<input type="search" autocomplete="off"></label><p class="search-status" role="status"></p><div class="search-results"></div><button type="button" class="secondary" data-more-food hidden>Mostrar mais resultados</button>${registerFood ? '<button type="button" class="secondary" data-register-food>Cadastrar alimento</button>' : ''}</div>`;
     const rows = root.querySelector('.food-rows');
     const search = root.querySelector('input[type=search]');
     const results = root.querySelector('.search-results');
@@ -71,28 +80,41 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         if (focusIndex === index) quantity.focus();
       });
     }
-    search.oninput = () => {
+    const status = root.querySelector('.search-status');
+    const more = root.querySelector('[data-more-food]');
+    let limit = 12;
+    function addItem(choice) {
+      if (items.length >= 100) return notify('Limite de 100 itens.');
+      const item = {...choice.item, unit: 'g', quantity: 100};
+      if (item.recipe) Object.assign(item, {unit: 'porção', quantity: 1, gramsPerUnit: item.recipe.yieldGrams / item.recipe.portions});
+      items.push(item);
+      search.value = '';
+      renderResults();
+      changed(); renderRows(items.length - 1); update();
+    }
+    function renderResults() {
       results.replaceChildren();
-      const query = normalize(search.value.trim());
-      if (!query) return;
-      const matches = choices.filter(choice => matchesName(choice.name, query)).slice(0, 12);
-      if (!matches.length) results.textContent = 'Nenhum resultado.';
-      for (const choice of matches) {
+      const query = search.value.trim();
+      const matches = query ? searchCatalog([...foodChoices(customFoods), ...preparations], query) : [];
+      more.hidden = matches.length <= limit;
+      status.textContent = !query ? '' : matches.length
+        ? `Exibindo ${Math.min(limit, matches.length)} de ${matches.length} resultados.`
+        : 'Nenhum resultado. Confira o nome ou cadastre o alimento com os dados do rótulo ou de fonte validada.';
+      for (const choice of matches.slice(0, limit)) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'secondary';
         button.textContent = `${choice.name} · ${choice.detail}`;
-        button.onclick = () => {
-          if (items.length >= 100) return notify('Limite de 100 itens.');
-          const item = {...choice.item, unit: 'g', quantity: 100};
-          if (item.recipe) Object.assign(item, {unit: 'porção', quantity: 1, gramsPerUnit: item.recipe.yieldGrams / item.recipe.portions});
-          items.push(item);
-          search.value = '';
-          results.replaceChildren();
-          changed(); renderRows(items.length - 1); update();
-        };
+        button.onclick = () => addItem(choice);
         results.append(button);
       }
+    }
+    search.oninput = () => {limit = 12; renderResults();};
+    more.onclick = () => {limit += 12; renderResults();};
+    const register = root.querySelector('[data-register-food]');
+    if (register) register.onclick = () => {
+      if (items.length >= 100) return notify('Limite de 100 itens.');
+      registerFood(search.value.trim(), food => addItem({item: {customFood: food}}));
     };
     search.onkeydown = event => { if (event.key === 'Enter') event.preventDefault(); };
     renderRows();
@@ -103,6 +125,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
   function renderMenus(state, readonly) {
     const dates = weekDates(date);
     const entries = structuredClone(mealItems(state, date, phase));
+    const customFoods = [...(state.customFoods ?? [])];
+    const newFoods = [];
     main.innerHTML = `<h1>Cardápio semanal</h1>
       <section><div class="nutrition-controls"><label>Data do cardápio<input id="menu-date" type="date" value="${date}"></label>
       <label>Registro<select id="menu-phase"><option value="planned">Planejado</option><option value="served">Realizado</option></select></label></div>
@@ -112,6 +136,12 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       <p>Quantidades por pessoa. Para medidas caseiras, informe o peso em gramas da sua medida.</p>
       <form id="dated-menu-form">${meals.map((name, index) => `<fieldset class="nutrition-meal"><legend>${name}</legend><div data-meal="${index}"></div><p data-vet="${index}" class="nutrition-total"></p></fieldset>`).join('')}
       <button ${readonly ? 'hidden' : ''}>Salvar cardápio</button></form>${source}</section>
+      ${readonly ? '' : `<dialog id="menu-food-dialog" aria-labelledby="menu-food-title">
+        <h2 id="menu-food-title">Cadastrar alimento</h2>
+        <p>Use valores por 100 g de parte comestível, obtidos do rótulo ou de fonte nutricional validada. Salve o cardápio para gravar o alimento no cofre.</p>
+        <form>${customFoodFields()}<p class="menu-food-error" role="status"></p>
+          <button type="submit">Adicionar à refeição</button><button type="button" data-cancel-food class="secondary">Cancelar</button>
+        </form></dialog>`}
       <section><h2>Lista de compras da semana</h2><label>Pessoas<input id="shopping-people" type="number" min="1" max="10000" value="${people}" inputmode="numeric" required></label>
       <p>Usa os cardápios planejados salvos. Pesos no estado indicado, sem ajuste para cascas, aparas ou cocção. Fichas são desdobradas em ingredientes.</p><ul id="shopping-list"></ul></section>
       <section><details><summary>Cardápios anteriores sem data</summary>${days.map(day => `<h3>${day}</h3><ul>${state.menus[day].map(meal => `<li>${esc(meal.name)} · ${esc(meal.description)} · ${meal.kcal} kcal</li>`).join('')}</ul>`).join('')}</details></section>`;
@@ -121,8 +151,31 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       });
       main.querySelector('#daily-vet').textContent = 'Dia · ' + nutrientLabel(totals(completeItems(entries.flat())));
     }
+    const dialog = main.querySelector('#menu-food-dialog');
+    let addFood;
+    if (dialog) {
+      const form = dialog.querySelector('form');
+      const error = dialog.querySelector('.menu-food-error');
+      addFood = (name, select) => {
+        form.reset();
+        error.textContent = '';
+        form.elements.name.value = name.slice(0, 100);
+        dialog.showModal();
+        form.onsubmit = event => {
+          event.preventDefault();
+          let food;
+          try {food = readCustomFood(form);} catch (issue) {error.textContent = issue.message; return;}
+          if (customFoods.length >= 2000) {error.textContent = 'Limite de 2.000 alimentos locais.'; return;}
+          customFoods.push(food);
+          newFoods.push(food);
+          dialog.close();
+          select(food);
+        };
+      };
+      dialog.querySelector('[data-cancel-food]').onclick = () => dialog.close();
+    }
     entries.forEach((items, index) => main.querySelector(`[data-meal="${index}"]`)
-      .append(itemEditor(items, state.customFoods ?? [], state.technicalRecipes ?? {}, markDirty, update, readonly)));
+      .append(itemEditor(items, customFoods, state.technicalRecipes ?? {}, markDirty, update, readonly, addFood)));
     update();
     const dateInput = main.querySelector('#menu-date');
     const phaseInput = main.querySelector('#menu-phase');
@@ -148,6 +201,10 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       event.preventDefault();
       if (readonly) return;
       persist(next => {
+        if (newFoods.length) {
+          next.customFoods ??= [];
+          next.customFoods.push(...newFoods);
+        }
         next.datedMenus ??= {};
         next.datedMenus[date] ??= {};
         next.datedMenus[date][phase] = entries;
@@ -224,9 +281,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
       <button type="button" class="secondary" id="catalog-more">Mostrar mais alimentos</button>${source}</section>
       <section ${readonly ? 'hidden' : ''}><h2>Cadastrar alimento</h2>
       <p>Informe os valores por 100 g de parte comestível e a fonte usada. O cadastro fica no cofre desta conta.</p>
-      <form id="custom-food-form"><label>Nome<input name="name" required maxlength="100"></label>
-      <label>Fonte dos valores<input name="source" required maxlength="200" placeholder="Ex.: rótulo do produto"></label>
-      <div class="nutrition-controls">${nutrients.map(key => `<label>${nutrientNames[key]}<input name="${key}" type="number" min="0" max="${key === 'kcal' ? 1000 : 100}" step="any" required inputmode="decimal"></label>`).join('')}</div>
+      <form id="custom-food-form">${customFoodFields()}
       <button>Salvar alimento</button></form></section>`;
 
     const search = main.querySelector('#catalog-search');
@@ -234,8 +289,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     const more = main.querySelector('#catalog-more');
     let limit = 30;
     function update() {
-      const query = normalize(search.value.trim());
-      const matches = choices.filter(choice => matchesName(choice.name, query));
+      const matches = searchCatalog(choices, search.value);
       main.querySelector('#catalog-count').textContent = `${matches.length} alimentos encontrados.`;
       list.innerHTML = matches.slice(0, limit).map(({name, detail, food}) =>
         `<li><strong>${esc(name)}</strong> · ${esc(detail)}<br>${nutrientLabel(food)} por 100 g</li>`).join('');
@@ -249,9 +303,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     form.onsubmit = event => {
       event.preventDefault();
       if (readonly) return;
-      const food = {id: crypto.randomUUID(), name: form.elements.name.value.trim(), source: form.elements.source.value.trim()};
-      for (const key of nutrients) food[key] = form.elements[key].valueAsNumber;
-      try {validateCustomFood(food);} catch (error) {return notify(error.message);}
+      let food;
+      try {food = readCustomFood(form);} catch (error) {return notify(error.message);}
       persist(next => {
         next.customFoods ??= [];
         next.customFoods.push(food);

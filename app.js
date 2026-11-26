@@ -28,7 +28,7 @@ async function save(){
   finally{saving=false;}
 }
 async function refresh(){
-  if(!user||dirty||saving)return;
+  if(!user||dirty||saving||main.querySelector('dialog[open]'))return;
   try{const result=await api('state');if(result.revision!==revision){state=result.state;revision=result.revision;committed=structuredClone(state);render();}}catch(error){notify(error.message+' Verifique a conexão.');}
 }
 function lock(){

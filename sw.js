@@ -1,8 +1,9 @@
-const VERSION='45f60ce0ff1e90b6';
+const VERSION='663dca300d78e6af';
 const BASE=new URL('./',self.registration.scope);
 const PREFIX='nutrir-shell:'+BASE.pathname+':';
 const CACHE=PREFIX+VERSION;
-const ASSETS=['./','./index.html','./app.js','./local-vault.js','./validation.js','./domain.js','./foods.js','./nutrition.js','./menu-ui.js','./app-update.js','./reports.js','./style.css','./icon-192.png','./icon-512.png','./manifest.webmanifest','./icon.svg'].map(path=>new URL(path,BASE).href);
+const CATALOG_HASH='530211a22ab1804f1ab7f8ae53f8b0aa26dded3b8929a5be7503048bbfc118ce';
+const ASSETS=['./','./index.html','./app.js','./local-vault.js','./validation.js','./domain.js','./foods.js','./food-search.js','./nutrition.js','./menu-ui.js','./app-update.js','./reports.js','./style.css','./icon-192.png','./icon-512.png','./manifest.webmanifest','./icon.svg'].map(path=>new URL(path,BASE).href);
 
 function supportsUpdatePrompt(worker){
   return new Promise(resolve=>{
@@ -26,6 +27,12 @@ self.addEventListener('install',event=>event.waitUntil((async()=>{
       if(asset===ASSETS[0]||asset===ASSETS[1]){
         const html=await response.clone().text();
         if(!html.includes('data-shell-version="'+VERSION+'"'))throw Error('Versão da página incompatível.');
+      }
+      if(asset===new URL('foods.js',BASE).href){
+        const bytes=await response.clone().arrayBuffer();
+        const digest=await crypto.subtle.digest('SHA-256',bytes);
+        const hash=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+        if(hash!==CATALOG_HASH)throw Error('Catálogo incompleto ou incompatível.');
       }
       return [asset,response];
     })).then(entries=>Promise.all(entries.map(([asset,response])=>cache.put(asset,response))));

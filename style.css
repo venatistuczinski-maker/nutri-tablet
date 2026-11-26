@@ -35,3 +35,9 @@
   #print-report table{font-size:10pt}
   #print-report tr{break-inside:avoid}
 }
+
+.search-status:empty,.menu-food-error:empty{display:none}
+.search-status{margin:6px 0}
+.picker [data-more-food],.picker [data-register-food]{margin-top:8px}
+#menu-food-dialog{width:min(640px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid #bacdc2;border-radius:16px;padding:20px;color:inherit}
+#menu-food-dialog::backdrop{background:#172d26a8}
