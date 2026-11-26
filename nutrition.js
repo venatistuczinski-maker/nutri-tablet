@@ -1,10 +1,10 @@
 import {meals, validDate} from './domain.js';
 import {foodById} from './foods.js';
 
-import {householdMeasures} from './household-measures.js';
+import {householdMeasures, isMass, massUnits} from './household-measures.js';
 
 export const phases = ['planned', 'served'];
-export const measures = ['g', ...householdMeasures];
+export const measures = ['g', 'kg', ...householdMeasures];
 export const nutrients = ['kcal', 'protein', 'carbs', 'fat'];
 const finite = (value, max) => Number.isFinite(value) && value > 0 && value <= max;
 
@@ -24,7 +24,7 @@ export function weekDates(date) {
 }
 
 export function grams(item) {
-  return item.quantity * (item.unit === 'g' ? 1 : item.gramsPerUnit);
+  return item.quantity * (isMass(item.unit) ? massUnits[item.unit] : item.gramsPerUnit);
 }
 
 export function itemFood(item) {
@@ -63,7 +63,9 @@ function validateItems(items, allowRecipe) {
   if (!Array.isArray(items) || items.length > 100) throw Error('Limite de 100 itens por refeição ou ficha.');
   for (const item of items) {
     if (!item || !measures.includes(item.unit) || !finite(item.quantity, 100000) ||
-      !finite(grams(item), 100000) || (item.unit === 'g' ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000))) throw Error('Revise a quantidade e o peso por medida.');
+      !finite(grams(item), 100000) || (isMass(item.unit) ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000))) throw Error('Revise a quantidade e o peso por medida.');
+    if (item.conversion !== undefined && (!item.conversion || !['reference','estimate','personal'].includes(item.conversion.kind) ||
+      typeof item.conversion.source !== 'string' || item.conversion.source.length > 400)) throw Error('Fonte da conversão inválida.');
     if (item.food !== undefined) {
       if (!foodById.has(item.food) || item.recipe !== undefined || item.customFood !== undefined) throw Error('Alimento inválido.');
     } else if (item.customFood !== undefined) {

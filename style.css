@@ -43,3 +43,4 @@
 #menu-food-dialog::backdrop{background:#172d26a8}
 
 .food-row [data-measure-source]{flex-basis:100%}
+.food-row select{min-width:0;max-width:100%}

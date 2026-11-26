@@ -1,8 +1,8 @@
-import {ibgeMeasuresUrl, measureDefault, measureKey} from './household-measures.js';
+import {faoDensityUrl, ibgeMeasuresUrl, isMass, measureDefault, measureKey, measureOptions} from './household-measures.js';
 import {days, meals, validDate} from './domain.js';
 import {foods, tacoUrl} from './foods.js';
 import {searchCatalog} from './food-search.js';
-import {grams, itemFood, localDate, mealItems, measures, nutrients, shoppingList, totals, validateCustomFood, validateRecipe, weekDates} from './nutrition.js';
+import {grams, itemFood, localDate, mealItems, nutrients, shoppingList, totals, validateCustomFood, validateRecipe, weekDates} from './nutrition.js';
 
 const number = new Intl.NumberFormat('pt-BR', {maximumFractionDigits: 2});
 const format = value => number.format(value);
@@ -15,7 +15,7 @@ const nutrientNames = {kcal: 'Energia (kcal)', protein: 'Proteínas (g)', carbs:
 const nutrientLabel = values => `VET ${format(values.kcal)} kcal · Proteínas ${format(values.protein)} g · Carboidratos ${format(values.carbs)} g · Lipídios ${format(values.fat)} g`;
 const source = `<p class="muted">Valores por peso comestível. Traços são tratados como zero. <a href="${tacoUrl}" target="_blank" rel="noopener noreferrer">TACO, NEPA/UNICAMP, 4ª edição, 2011</a> · <a href="https://www.tbca.net.br/" target="_blank" rel="noopener noreferrer">Consultar TBCA online</a></p>`;
 
-const measureHelp = `<p>Padrões de referência do <a href="${ibgeMeasuresUrl}" target="_blank" rel="noopener noreferrer">IBGE · POF 2008–2009</a>. Para usar um utensílio diferente ou uma medida sem referência, pese o alimento. Escolha “Guardar padrão” e salve o cardápio ou a ficha para reutilizar esse peso.</p>`;
+const measureHelp = `<p>As medidas com peso aparecem primeiro. Confirme as estimativas sugeridas ou informe a pesagem. Para guardar um peso da Casa, toque em “Guardar padrão” e salve. Fontes de referência: <a href="${ibgeMeasuresUrl}" target="_blank" rel="noopener noreferrer">IBGE · POF</a> e <a href="${faoDensityUrl}" target="_blank" rel="noopener noreferrer">FAO/INFOODS · densidades</a>.</p>`;
 
 function measureDraft(state) {
   const values = structuredClone(state.measurePreferences ?? {});
@@ -62,52 +62,84 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         const row = document.createElement('fieldset');
         row.className = 'food-row';
         row.disabled = readonly;
+        const options = measureOptions(item, weights.values);
+        const option = (unit, label = unit) => `<option value="${unit}" ${unit === item.unit ? 'selected' : ''}>${label}</option>`;
+        const group = (label, units) => units.length ? `<optgroup label="${label}">${units.map(unit => option(unit)).join('')}</optgroup>` : '';
         row.innerHTML = `<legend>${esc(itemFood(item)?.name ?? item.recipe.name)}</legend>
-          <label>Quantidade<input data-quantity type="number" min="0.001" max="100000" step="any" inputmode="decimal" required value="${item.quantity}"></label>
-          <label>Medida<select>${measures.map(unit => `<option ${unit === item.unit ? 'selected' : ''}>${unit}</option>`).join('')}</select></label>
-          <label data-weight-label>Gramas por medida<input data-weight type="number" min="0.001" max="100000" step="any" inputmode="decimal" value="${item.gramsPerUnit ?? ''}"></label>
-          <output></output><small data-measure-source></small><button type="button" class="secondary" data-save-measure>Guardar padrão</button><button type="button" class="secondary" data-remove>Excluir item</button>`;
+          <label>Quantidade<input data-quantity type="number" min="0.000001" max="100000" step="any" inputmode="decimal" required value="${item.quantity}"></label>
+          <label>Medida<select>${group('Com conversão disponível', options.reference)}
+            ${option('g', 'g · gramas')}${option('kg', 'kg · quilogramas')}
+            ${group('Estimativas para aprovação', options.estimate)}${group('Requer pesagem ou densidade', options.manual)}</select></label>
+          <label data-weight-label><span>Gramas por medida</span><input data-weight type="number" min="0.000001" max="100000" step="any" inputmode="decimal" value="${item.gramsPerUnit ?? ''}"></label>
+          <output></output><small data-measure-source></small><button type="button" class="secondary" data-approve hidden>Aprovar estimativa</button><button type="button" class="secondary" data-save-measure>Guardar padrão</button><button type="button" class="secondary" data-remove>Excluir item</button>`;
         const quantity = row.querySelector('[data-quantity]');
         const select = row.querySelector('select');
+        const weightLabel = row.querySelector('[data-weight-label]');
         const weight = row.querySelector('[data-weight]');
         const display = row.querySelector('output');
         const measureSource = row.querySelector('[data-measure-source]');
         const saveMeasure = row.querySelector('[data-save-measure]');
+        const approve = row.querySelector('[data-approve]');
         const key = measureKey(item);
+        let pending;
+        function setConversion([gramsPerUnit, source, kind]) {
+          item.gramsPerUnit = gramsPerUnit;
+          item.conversion = {source, kind};
+        }
         function sync() {
-          weight.disabled = item.unit === 'g';
+          weight.disabled = isMass(item.unit);
           weight.required = !weight.disabled;
-          row.querySelector('[data-weight-label]').hidden = item.unit === 'g';
-          saveMeasure.hidden = item.unit === 'g' || !key || readonly;
-          measureSource.hidden = item.unit === 'g';
-          const suggested = measureDefault(item, item.unit, weights.values);
-          measureSource.textContent = suggested && item.gramsPerUnit === suggested[0] ? suggested[1]
-            : Number.isFinite(item.gramsPerUnit) ? 'Peso informado neste item' : 'Informe o peso em gramas desta medida.';
+          weightLabel.hidden = weight.disabled;
+          weightLabel.querySelector('span').textContent = item.unit === 'mL'
+            ? 'Densidade (g/mL)' : item.unit === 'L' ? 'Gramas por litro' : 'Gramas por medida';
+          approve.hidden = !pending;
+          saveMeasure.hidden = weight.disabled || !key || readonly || Boolean(pending);
+          measureSource.hidden = weight.disabled;
+          const conversion = pending ? {kind: 'estimate', source: pending[1]} : item.conversion;
+          const label = {reference: 'Referência', estimate: pending ? 'Estimativa · aguarda aprovação' : 'Estimativa aprovada', personal: 'Peso personalizado'};
+          measureSource.textContent = conversion ? `${label[conversion.kind]} · ${conversion.source}`
+            : Number.isFinite(item.gramsPerUnit) ? 'Peso registrado no item' : 'Informe o peso em gramas desta medida.';
+          weight.setCustomValidity(pending ? 'Aprove a estimativa ou informe o peso medido.' : '');
           quantity.setCustomValidity(grams(item) > 100000 ? 'Limite de 100.000 g por item.' : '');
-          display.textContent = Number.isFinite(grams(item)) && grams(item) > 0 ? `${format(grams(item))} g` : 'Informe o peso';
+          display.textContent = pending ? 'Estimativa ainda fora do total' :
+            Number.isFinite(grams(item)) && grams(item) > 0 ? `${format(grams(item))} g` : 'Informe o peso';
         }
         function edit() { sync(); changed(); update(); }
         quantity.oninput = () => { item.quantity = quantity.valueAsNumber; edit(); };
-        weight.oninput = () => { item.gramsPerUnit = weight.valueAsNumber; edit(); };
+        weight.oninput = () => {
+          pending = undefined;
+          setConversion([weight.valueAsNumber, 'Peso informado para este item', 'personal']);
+          edit();
+        };
         select.onchange = () => {
           const fromGrams = item.unit === 'g';
           item.unit = select.value;
           delete item.gramsPerUnit;
-          if (item.unit !== 'g') {
+          delete item.conversion;
+          pending = undefined;
+          if (!isMass(item.unit)) {
             const suggested = measureDefault(item, item.unit, weights.values);
-            if (suggested) item.gramsPerUnit = suggested[0];
-            if (fromGrams && item.quantity === 100) {
-              item.quantity = 1;
-              quantity.value = 1;
-            }
+            if (suggested?.[2] === 'estimate') pending = suggested;
+            else if (suggested) setConversion(suggested);
           }
-          weight.value = item.gramsPerUnit ?? '';
+          if (fromGrams && item.quantity === 100 && item.unit !== 'g') {
+            item.quantity = item.unit === 'kg' ? 0.1 : 1;
+            quantity.value = item.quantity;
+          }
+          weight.value = pending?.[0] ?? item.gramsPerUnit ?? '';
           edit();
           if (!weight.disabled && !weight.value) weight.focus();
+        };
+        approve.onclick = () => {
+          if (!pending) return;
+          setConversion(pending);
+          pending = undefined;
+          edit();
         };
         saveMeasure.onclick = () => {
           if (!key || weight.disabled || !weight.reportValidity()) return;
           weights.set(key, item.unit, weight.valueAsNumber);
+          if (item.conversion?.kind !== 'estimate') item.conversion = {kind: 'personal', source: 'Padrão da Casa'};
           edit();
           notify('Padrão preparado. Salve o cardápio ou a ficha para guardar no cofre.');
         };
@@ -125,8 +157,10 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     function addItem(choice) {
       if (items.length >= 100) return notify('Limite de 100 itens.');
       const item = {...choice.item, unit: 'g', quantity: 100};
-      if (item.recipe) Object.assign(item, {unit: 'porção', quantity: 1,
-        gramsPerUnit: measureDefault(item, 'porção', weights.values)[0]});
+      if (item.recipe) {
+        const [gramsPerUnit, source, kind] = measureDefault(item, 'porção média', weights.values);
+        Object.assign(item, {unit: 'porção média', quantity: 1, gramsPerUnit, conversion: {source, kind}});
+      }
       items.push(item);
       search.value = '';
       renderResults();
