@@ -27,7 +27,8 @@ export async function setupAppUpdate({canReload, notify}){
   async function showAvailable(){
     const version=await controllerVersion();
     activated=Boolean(version&&version!==pageVersion);
-    if(activated||registration?.waiting)updateStatus.textContent='Nova versão disponível.';
+    if(activated||(registration?.active&&registration.waiting))updateStatus.textContent='Nova versão disponível.';
+    else if(updateStatus.textContent==='Nova versão disponível.')updateStatus.textContent='';
     return activated;
   }
 
@@ -75,13 +76,14 @@ export async function setupAppUpdate({canReload, notify}){
 
   try{
     registration=await workers.register(new URL('./sw.js',document.baseURI),{updateViaCache:'none'});
-    button.hidden=false;
     registration.addEventListener('updatefound',()=>{
       const worker=registration.installing;
       if(worker)waitForInstallation(worker).then(showAvailable);
     });
     workers.ready.then(()=>{
       offlineStatus.textContent='Arquivos prontos para uso offline neste navegador.';
+      button.hidden=false;
+      check();
     });
   }catch{
     offlineStatus.textContent='Não foi possível preparar o uso offline. Conecte-se e tente novamente.';
@@ -91,7 +93,7 @@ export async function setupAppUpdate({canReload, notify}){
   button.addEventListener('click',async()=>{
     if(!canReload())return notify('Salve as alterações antes de atualizar o aplicativo.');
     if(await showAvailable())return finishReload();
-    if(!navigator.onLine)return notify('Conecte-se à internet para procurar uma nova versão.');
+    if(!registration.waiting&&!navigator.onLine)return notify('Conecte-se à internet para procurar uma nova versão.');
 
     button.disabled=true;
     updateStatus.textContent='Verificando atualização…';
@@ -123,5 +125,4 @@ export async function setupAppUpdate({canReload, notify}){
   window.addEventListener('pageshow',check);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
   setInterval(()=>{if(!document.hidden)check();},60000);
-  check();
 }
