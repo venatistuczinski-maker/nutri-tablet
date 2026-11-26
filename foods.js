@@ -579,3 +579,8 @@ export const foods = [
 ].map(([id, name, kcal, protein, carbs, fat]) => ({id, name, kcal, protein, carbs, fat}));
 
 export const foodById = new Map(foods.map(food => [food.id, food]));
+
+export function tacoId(value) {
+  const id = typeof value === 'string' && /^\d{1,3}$/.test(value) ? Number(value) : value;
+  return foodById.has(id) ? id : undefined;
+}

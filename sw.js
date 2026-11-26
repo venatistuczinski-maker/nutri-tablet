@@ -1,8 +1,14 @@
-const VERSION='ceca3c4ced89d0ac';
+const VERSION='2084cb7aa249b966';
 const BASE=new URL('./',self.registration.scope);
 const PREFIX='nutrir-shell:'+BASE.pathname+':';
 const CACHE=PREFIX+VERSION;
-const CATALOG_HASH='530211a22ab1804f1ab7f8ae53f8b0aa26dded3b8929a5be7503048bbfc118ce';
+const MEASURE_HASHES={
+  'foods.js':'4349595a50f581724e53c4f33c91fc50883156e294bb87bc97973b6567fae41f',
+  'household-measures.js':'11ab559250c04d9a81f779fef81e64a792784cc330027df409eb84c583d3ddee',
+  'ibge-measure-data.js':'a7ec12b69a8e165df70d9737a7bedc1c510d53122b55ae7533032c7b6ce13960',
+  'menu-ui.js':'4d83cfd4700d6f716f6af126a12fc8ae5c5f80a78a945d53d14cbac0261bdefc',
+  'nutrition.js':'817232805231514e5f47019c77c75567f4e53f27cca5988018009dc4f1397472',
+};
 const ASSETS=['./','./index.html','./app.js','./local-vault.js','./validation.js','./domain.js','./foods.js','./household-measures.js','./ibge-measure-data.js','./food-search.js','./nutrition.js','./menu-ui.js','./app-update.js','./reports.js','./style.css','./icon-192.png','./icon-512.png','./manifest.webmanifest','./icon.svg'].map(path=>new URL(path,BASE).href);
 
 function supportsUpdatePrompt(worker){
@@ -28,11 +34,12 @@ self.addEventListener('install',event=>event.waitUntil((async()=>{
         const html=await response.clone().text();
         if(!html.includes('data-shell-version="'+VERSION+'"'))throw Error('Versão da página incompatível.');
       }
-      if(asset===new URL('foods.js',BASE).href){
+      const assetName=url.pathname.slice(BASE.pathname.length);
+      if(Object.hasOwn(MEASURE_HASHES,assetName)){
         const bytes=await response.clone().arrayBuffer();
         const digest=await crypto.subtle.digest('SHA-256',bytes);
         const hash=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
-        if(hash!==CATALOG_HASH)throw Error('Catálogo incompleto ou incompatível.');
+        if(hash!==MEASURE_HASHES[assetName])throw Error('Arquivo de medidas incompatível: '+assetName);
       }
       return [asset,response];
     })).then(entries=>Promise.all(entries.map(([asset,response])=>cache.put(asset,response))));

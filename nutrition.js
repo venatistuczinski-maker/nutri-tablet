@@ -1,5 +1,5 @@
 import {meals, validDate} from './domain.js';
-import {foodById} from './foods.js';
+import {foodById, tacoId} from './foods.js';
 
 import {householdMeasures, isMass, massUnits} from './household-measures.js';
 
@@ -28,14 +28,16 @@ export function grams(item) {
 }
 
 export function itemFood(item) {
-  return item.food !== undefined ? foodById.get(item.food) : item.customFood;
+  return item.food !== undefined ? foodById.get(tacoId(item.food)) : item.customFood;
 }
 
 export function totals(items, divisor = 1) {
   const total = {kcal: 0, protein: 0, carbs: 0, fat: 0};
   for (const item of items) {
+    const weight = grams(item);
+    if (!Number.isFinite(weight) || weight <= 0) continue;
     const values = itemFood(item) ?? totals(item.recipe.items, item.recipe.yieldGrams / 100);
-    for (const key of nutrients) total[key] += values[key] * grams(item) / 100 / divisor;
+    for (const key of nutrients) total[key] += values[key] * weight / 100 / divisor;
   }
   return total;
 }
@@ -48,6 +50,7 @@ export function shoppingList(state, dates, people) {
   const weights = new Map();
   function add(item, scale) {
     const weight = grams(item) * scale;
+    if (!Number.isFinite(weight) || weight <= 0) return;
     const food = itemFood(item);
     if (food) {
       const previous = weights.get(food.id);
@@ -59,21 +62,25 @@ export function shoppingList(state, dates, people) {
     .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 }
 
-function validateItems(items, allowRecipe) {
+export function validateItems(items, allowRecipe, allowMissingWeight = false) {
   if (!Array.isArray(items) || items.length > 100) throw Error('Limite de 100 itens por refeição ou ficha.');
   for (const item of items) {
-    if (!item || !measures.includes(item.unit) || !finite(item.quantity, 100000) ||
-      !finite(grams(item), 100000) || (isMass(item.unit) ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000))) throw Error('Revise a quantidade e o peso por medida.');
+    if (!item || !measures.includes(item.unit) || !finite(item.quantity, 100000)) throw Error('Revise a quantidade e o peso por medida.');
+    const missing = !isMass(item.unit) && item.gramsPerUnit == null;
+    if (!(allowMissingWeight && missing) &&
+      (!finite(grams(item), 100000) || (isMass(item.unit) ? item.gramsPerUnit !== undefined : !finite(item.gramsPerUnit, 100000)))) {
+      throw Error('Revise a quantidade e o peso por medida.');
+    }
     if (item.conversion !== undefined && (!item.conversion || !['reference','estimate','personal'].includes(item.conversion.kind) ||
       typeof item.conversion.source !== 'string' || item.conversion.source.length > 400)) throw Error('Fonte da conversão inválida.');
     if (item.food !== undefined) {
-      if (!foodById.has(item.food) || item.recipe !== undefined || item.customFood !== undefined) throw Error('Alimento inválido.');
+      if (tacoId(item.food) === undefined || item.recipe !== undefined || item.customFood !== undefined) throw Error('Alimento inválido.');
     } else if (item.customFood !== undefined) {
       if (item.recipe !== undefined) throw Error('Alimento inválido.');
       validateCustomFood(item.customFood);
     } else {
       if (!allowRecipe) throw Error('Selecione um alimento do catálogo.');
-      validateRecipe(item.recipe);
+      validateRecipe(item.recipe, allowMissingWeight);
       if (item.recipeId !== undefined && (typeof item.recipeId !== 'string' || !/^[\da-f-]{36}$/.test(item.recipeId))) {
         throw Error('Identificador de ficha inválido.');
       }
@@ -81,13 +88,13 @@ function validateItems(items, allowRecipe) {
   }
 }
 
-export function validateRecipe(recipe) {
+export function validateRecipe(recipe, allowMissingWeight = false) {
   if (!recipe || typeof recipe.name !== 'string' || !recipe.name.trim() || recipe.name.length > 100 ||
     typeof recipe.instructions !== 'string' || recipe.instructions.length > 5000 ||
     !finite(recipe.yieldGrams, 100000) || !Number.isInteger(recipe.portions) || !finite(recipe.portions, 1000)) {
     throw Error('Revise o nome, o rendimento e o número de porções.');
   }
-  validateItems(recipe.items, false);
+  validateItems(recipe.items, false, allowMissingWeight);
   if (!recipe.items.length) throw Error('Adicione pelo menos um ingrediente à ficha.');
 }
 
@@ -130,7 +137,7 @@ export function validateNutrition(state) {
       if (!validDate(date) || !day || typeof day !== 'object' || Array.isArray(day)) throw Error('Data de cardápio inválida.');
       for (const [phase, entries] of Object.entries(day)) {
         if (!phases.includes(phase) || !Array.isArray(entries) || entries.length !== meals.length) throw Error('Cardápio inválido.');
-        entries.forEach(items => validateItems(items, true));
+        entries.forEach(items => validateItems(items, true, true));
       }
     }
   }
@@ -139,7 +146,7 @@ export function validateNutrition(state) {
     if (!recipes || typeof recipes !== 'object' || Array.isArray(recipes) || Object.keys(recipes).length > 2000) throw Error('Fichas inválidas.');
     for (const [id, recipe] of Object.entries(recipes)) {
       if (!/^[\da-f-]{36}$/.test(id)) throw Error('Identificador de ficha inválido.');
-      validateRecipe(recipe);
+      validateRecipe(recipe, true);
     }
   }
 }

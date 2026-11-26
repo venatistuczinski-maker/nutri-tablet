@@ -2,7 +2,7 @@ import {faoDensityUrl, ibgeMeasuresUrl, isMass, measureDefault, measureKey, meas
 import {days, meals, validDate} from './domain.js';
 import {foods, tacoUrl} from './foods.js';
 import {searchCatalog} from './food-search.js';
-import {grams, itemFood, localDate, mealItems, nutrients, shoppingList, totals, validateCustomFood, validateRecipe, weekDates} from './nutrition.js';
+import {grams, itemFood, localDate, mealItems, nutrients, shoppingList, totals, validateCustomFood, validateItems, validateRecipe, weekDates} from './nutrition.js';
 
 const number = new Intl.NumberFormat('pt-BR', {maximumFractionDigits: 2});
 const format = value => number.format(value);
@@ -83,20 +83,33 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     const results = root.querySelector('.search-results');
     const pendingEstimates = new WeakMap();
     const changedMeasures = new WeakSet();
+    function setConversion(item, [gramsPerUnit, source, kind]) {
+      item.gramsPerUnit = gramsPerUnit;
+      item.conversion = {source, kind};
+    }
+    function suggestWeight(item) {
+      if (readonly || isMass(item.unit) || item.gramsPerUnit != null || pendingEstimates.has(item)) return;
+      const suggestion = measureDefault(item, item.unit, weights.values);
+      if (!suggestion) return;
+      if (suggestion[2] === 'estimate') pendingEstimates.set(item, suggestion);
+      else setConversion(item, suggestion);
+    }
     function renderRows(focusIndex) {
       rows.innerHTML = '';
       items.forEach((item, index) => {
+        suggestWeight(item);
         const row = document.createElement('fieldset');
         row.className = 'food-row';
         row.disabled = readonly;
         const options = measureOptions(item, weights.values);
         const option = (unit, label = unit) => `<option value="${unit}" ${unit === item.unit ? 'selected' : ''}>${label}</option>`;
-        const group = (label, units) => units.length ? `<optgroup label="${label}">${units.map(unit => option(unit)).join('')}</optgroup>` : '';
+        const group = (label, units, showWeight = false) => units.length
+          ? `<optgroup label="${label}">${units.map(unit => option(unit, showWeight ? `${unit} · ${format(measureDefault(item, unit, weights.values)[0])} g` : unit)).join('')}</optgroup>` : '';
         row.innerHTML = `<legend>${esc(itemFood(item)?.name ?? item.recipe.name)}</legend>
           <label>Quantidade<input data-quantity type="number" min="0.000001" max="100000" step="any" inputmode="decimal" required value="${item.quantity}"></label>
-          <label>Medida<select>${group('Com conversão disponível', options.reference)}
-            ${option('g', 'g · gramas')}${option('kg', 'kg · quilogramas')}
-            ${group('Estimativas para aprovação', options.estimate)}${group('Requer pesagem ou densidade', options.manual)}</select></label>
+          <label>Medida<select>${group('Com conversão disponível', options.reference, true)}
+            ${group('Estimativas para aprovação', options.estimate, true)}
+            ${option('g', 'g · gramas')}${option('kg', 'kg · quilogramas')}${group('Requer pesagem ou densidade', options.manual)}</select></label>
           <label data-weight-label><span>Gramas por medida</span><input data-weight type="number" min="0.000001" max="100000" step="any" inputmode="decimal" value="${pendingEstimates.get(item)?.[0] ?? item.gramsPerUnit ?? ''}"></label>
           <output></output><small data-measure-source></small><button type="button" class="secondary" data-approve hidden>Aprovar estimativa</button><button type="button" class="secondary" data-save-measure>Guardar padrão</button><button type="button" class="secondary" data-remove>Excluir item</button>`;
         const quantity = row.querySelector('[data-quantity]');
@@ -109,10 +122,6 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         const approve = row.querySelector('[data-approve]');
         const key = measureKey(item);
         let pending = pendingEstimates.get(item);
-        function setConversion([gramsPerUnit, source, kind]) {
-          item.gramsPerUnit = gramsPerUnit;
-          item.conversion = {source, kind};
-        }
         function sync() {
           weight.disabled = isMass(item.unit);
           weight.required = !weight.disabled;
@@ -140,7 +149,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           pending = undefined;
           pendingEstimates.delete(item);
           changedMeasures.add(item);
-          setConversion([weight.valueAsNumber, 'Peso informado para este item', 'personal']);
+          setConversion(item, [weight.valueAsNumber, 'Peso informado para este item', 'personal']);
           edit();
         };
         select.onchange = () => {
@@ -151,14 +160,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           pending = undefined;
           pendingEstimates.delete(item);
           changedMeasures.add(item);
-          if (!isMass(item.unit)) {
-            const suggested = measureDefault(item, item.unit, weights.values);
-            if (suggested?.[2] === 'estimate') {
-              pending = suggested;
-              pendingEstimates.set(item, suggested);
-            }
-            else if (suggested) setConversion(suggested);
-          }
+          suggestWeight(item);
+          pending = pendingEstimates.get(item);
           if (fromGrams && item.quantity === 100 && item.unit !== 'g') {
             item.quantity = item.unit === 'kg' ? 0.1 : 1;
             quantity.value = item.quantity;
@@ -169,7 +172,7 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
         };
         approve.onclick = () => {
           if (!pending) return;
-          setConversion(pending);
+          setConversion(item, pending);
           pending = undefined;
           pendingEstimates.delete(item);
           edit();
@@ -258,13 +261,16 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
           <button type="submit">Adicionar à refeição</button><button type="button" data-cancel-food class="secondary">Cancelar</button>
         </form></dialog>`}
       <section><h2>Lista de compras da semana</h2><label>Pessoas<input id="shopping-people" type="number" min="1" max="10000" value="${people}" inputmode="numeric" required></label>
-      <p>Usa os cardápios planejados salvos. Pesos no estado indicado, sem ajuste para cascas, aparas ou cocção. Fichas são desdobradas em ingredientes.</p><ul id="shopping-list"></ul></section>
+      <p>Usa os cardápios planejados salvos. Itens sem peso ficam fora da lista. Pesos no estado indicado, sem ajuste para cascas, aparas ou cocção. Fichas são desdobradas em ingredientes.</p><ul id="shopping-list"></ul></section>
       <section><details><summary>Cardápios anteriores sem data</summary>${days.map(day => `<h3>${day}</h3><ul>${state.menus[day].map(meal => `<li>${esc(meal.name)} · ${esc(meal.description)} · ${meal.kcal} kcal</li>`).join('')}</ul>`).join('')}</details></section>`;
     function update() {
       entries.forEach((items, index) => {
         main.querySelector(`[data-vet="${index}"]`).textContent = nutrientLabel(totals(completeItems(items)));
       });
-      main.querySelector('#daily-vet').textContent = 'Dia · ' + nutrientLabel(totals(completeItems(entries.flat())));
+      const all = entries.flat();
+      const complete = completeItems(all);
+      main.querySelector('#daily-vet').textContent = 'Dia · ' + nutrientLabel(totals(complete)) +
+        (complete.length < all.length ? ' · Total parcial, há medidas pendentes.' : '');
     }
     const dialog = main.querySelector('#menu-food-dialog');
     let addFood;
@@ -317,6 +323,8 @@ export function createNutritionUI({main, esc, notify, discard, markDirty, persis
     menuForm.onsubmit = event => {
       event.preventDefault();
       if (readonly) return;
+      try { entries.forEach(items => validateItems(items, true)); }
+      catch (error) { return notify(error.message); }
       persist(next => {
         weights.commit(next);
         if (newFoods.length) {

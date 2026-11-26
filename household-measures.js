@@ -1,3 +1,4 @@
+import {tacoId} from './foods.js';
 import {ibgeMeasures} from './ibge-measure-data.js';
 
 export const ibgeMeasuresUrl = 'https://biblioteca.ibge.gov.br/visualizacao/livros/liv50000.pdf';
@@ -36,13 +37,17 @@ const sovado = {
 };
 
 export function measureKey(item) {
-  if (item.food !== undefined) return `taco:${item.food}`;
+  if (item.food !== undefined) {
+    const id = tacoId(item.food);
+    return id === undefined ? undefined : `taco:${id}`;
+  }
   if (item.customFood) return `local:${item.customFood.id}`;
   if (item.recipeId) return `ficha:${item.recipeId}`;
 }
 
 export function measureDefault(item, unitName, preferences) {
   const saved = preferences[measureKey(item)] ?? {};
+  const id = tacoId(item.food);
   const canonical = legacy[unitName] ?? unitName;
   const old = Object.keys(legacy).find(key => legacy[key] === canonical);
   const preferred = saved[unitName] ?? saved[canonical] ?? saved[old];
@@ -54,15 +59,19 @@ export function measureDefault(item, unitName, preferences) {
   if (canonical === 'porção média' && item.recipe) {
     return [item.recipe.yieldGrams / item.recipe.portions, 'Rendimento da ficha dividido pelo número de porções', 'reference'];
   }
-  if (item.food === 54 && sovado[canonical]) return sovado[canonical];
   const name = item.customFood?.name ?? item.recipe?.name ?? '';
+  const normalizedName = name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  if ((id === 54 || (item.customFood && /^pao (?:de )?(?:trigo )?sovado$/.test(normalizedName))) && sovado[canonical]) {
+    return sovado[canonical];
+  }
   if (canonical === 'ponta de faca' && /\b(?:chimia|schimier|schmier|chimier)\b/i.test(name)) {
     return [12.5, 'IBGE · POF 2008–2009 · cód. 6902301, schimier de cana · passada de faca de doce cremoso usada como aproximação', 'estimate'];
   }
   // The legacy coffee measure used a 50 mL cup, distinct from the 200 mL tea cup.
-  if (item.food === 471 && unitName === 'xícara') return measureDefault(item, 'xícara de café', preferences);
-  const data = ibgeMeasures[item.customFood?.measureReference === 'geleia' ? 'geleia' : item.food];
-  const density = densities[item.food];
+  if (id === 471 && unitName === 'xícara') return measureDefault(item, 'xícara de café', preferences);
+  const data = ibgeMeasures[item.customFood?.measureReference === 'geleia' ? 'geleia' : id];
+  const density = densities[id];
   const personalDensity = saved.mL ?? (saved.L === undefined ? undefined : saved.L / 1000);
   if (volumes[canonical] && (personalDensity || density)) {
     const ml = volumes[canonical];
